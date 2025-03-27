@@ -1,22 +1,22 @@
 import os
 import asyncio
 import requests
-from telethon import TelegramClient, events
-from telethon.sessions import StringSession
-from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
-from telegram.ext import Updater, CommandHandler, CallbackContext
+from pyrogram import Client, filters
+from pytgcalls import PyTgCalls, StreamType
+from pytgcalls.types.input_stream import AudioPiped
 import yt_dlp
 import ffmpeg
 from PIL import Image, ImageDraw, ImageFont
 from config import API_ID, API_HASH, BOT_TOKEN, SESSION_STRING
 
-# Telethon बॉट और असिस्टेंट क्लाइंट सेटअप
-bot = TelegramClient('bot', API_ID, API_HASH).start(bot_token=BOT_TOKEN)
-assistant = TelegramClient(StringSession(SESSION_STRING), API_ID, API_HASH)
+# Pyrogram Bot और Assistant Client सेटअप
+bot = Client("bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
+assistant = Client("assistant", api_id=API_ID, api_hash=API_HASH, session_string=SESSION_STRING)
+vc = PyTgCalls(assistant)  # Voice Chat के लिए PyTgCalls
 
 music_queue = []  # Queue सिस्टम
 
-# ऑडियो डाउनलोड और प्रोसेसिंग फ़ंक्शन
+# YouTube से ऑडियो डाउनलोड करने का फ़ंक्शन
 async def download_audio(song_name):
     ydl_opts = {
         'format': 'bestaudio/best',
@@ -30,16 +30,8 @@ async def download_audio(song_name):
 
 # वॉयस चैट में स्ट्रीमिंग फ़ंक्शन
 async def stream_audio(chat_id, audio_file):
-    await assistant.join_call(chat_id)
-    process = (
-        ffmpeg
-        .input(audio_file)
-        .output("pipe:", format="opus", acodec="libopus", audio_bitrate="128k")
-        .run_async(pipe_stdout=True, pipe_stderr=True)
-    )
-    
-    async for chunk in process.stdout:
-        await assistant.send_file(chat_id, chunk)
+    await vc.join_group_call(chat_id, AudioPiped(audio_file, StreamType().pulse_stream))
+    print(f"🎶 Playing: {audio_file}")
 
 # कस्टम थंबनेल बनाना
 def create_thumbnail(song_title, thumbnail_url):
@@ -57,22 +49,23 @@ def create_thumbnail(song_title, thumbnail_url):
     base_image.save(final_thumb)
     return final_thumb
 
-# Telegram Bot Command Handlers
-async def start(update: Update, context: CallbackContext) -> None:
-    buttons = [[InlineKeyboardButton("Join Support", url="https://t.me/your_support_group")]]
-    reply_markup = InlineKeyboardMarkup(buttons)
-    await update.message.reply_text("I am a Streaming Bot! Use /play <song name> to stream.", reply_markup=reply_markup)
+# /start Command
+@bot.on_message(filters.command("start"))
+async def start(_, message):
+    await message.reply_text("I am a Streaming Bot! Use /play <song name> to stream.")
 
-async def play(update: Update, context: CallbackContext) -> None:
-    if len(context.args) == 0:
-        await update.message.reply_text("Usage: /play <song name>")
+# /play Command
+@bot.on_message(filters.command("play"))
+async def play(_, message):
+    if len(message.command) < 2:
+        await message.reply_text("Usage: /play <song name>")
         return
     
-    song_name = " ".join(context.args)
-    chat_id = update.message.chat_id
-    user_name = update.message.from_user.first_name
+    song_name = " ".join(message.command[1:])
+    chat_id = message.chat.id
+    user_name = message.from_user.first_name
 
-    await update.message.reply_text(f"🔎 Searching for '{song_name}' on YouTube...")
+    await message.reply_text(f"🔎 Searching for '{song_name}' on YouTube...")
     
     audio_file, thumbnail_url, song_title = await download_audio(song_name)
 
@@ -80,43 +73,34 @@ async def play(update: Update, context: CallbackContext) -> None:
         music_queue.append((audio_file, chat_id, song_title, user_name))
         
         thumb_file = create_thumbnail(song_title, thumbnail_url)
-        await update.message.reply_photo(photo=open(thumb_file, "rb"), caption=f"🎵 Now Playing: {song_title}\nRequested by: {user_name}")
+        await message.reply_photo(photo=open(thumb_file, "rb"), caption=f"🎵 Now Playing: {song_title}\nRequested by: {user_name}")
 
         await stream_audio(chat_id, audio_file)
     else:
         music_queue.append((audio_file, chat_id, song_title, user_name))
-        await update.message.reply_text(f"🎵 Added 1 music: {song_title}\nRequested by: {user_name}")
+        await message.reply_text(f"🎵 Added 1 music: {song_title}\nRequested by: {user_name}")
 
-async def skip(update: Update, context: CallbackContext) -> None:
+# /skip Command
+@bot.on_message(filters.command("skip"))
+async def skip(_, message):
     if len(music_queue) > 1:
         music_queue.pop(0)
         next_song = music_queue[0]
         
         thumb_file = create_thumbnail(next_song[2], next_song[3])
-        await update.message.reply_photo(photo=open(thumb_file, "rb"), caption=f"🎵 Now Playing: {next_song[2]}\nRequested by: {next_song[3]}")
+        await message.reply_photo(photo=open(thumb_file, "rb"), caption=f"🎵 Now Playing: {next_song[2]}\nRequested by: {next_song[3]}")
         
         await stream_audio(next_song[1], next_song[0])
     else:
-        await update.message.reply_text("🎵 No more songs in the queue!")
+        await message.reply_text("🎵 No more songs in the queue!")
 
 # बॉट स्टार्ट करें
-def main():
-    updater = Updater(BOT_TOKEN, use_context=True)
-    dp = updater.dispatcher
-
-    dp.add_handler(CommandHandler("start", start))
-    dp.add_handler(CommandHandler("play", play))
-    dp.add_handler(CommandHandler("skip", skip))
-
-    updater.start_polling()
-    updater.idle()
-
-# Telethon क्लाइंट रन करें
-async def run_bot():
+async def main():
+    await bot.start()
     await assistant.start()
-    await bot.run_until_disconnected()
+    await vc.start()
+    print("🤖 Bot is running...")
+    await idle()
 
 if __name__ == "__main__":
-    loop = asyncio.get_event_loop()
-    loop.create_task(run_bot())
-    main()
+    asyncio.run(main())
