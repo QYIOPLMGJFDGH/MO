@@ -3,7 +3,8 @@ import asyncio
 import requests
 from pyrogram import Client, filters
 from pytgcalls import PyTgCalls
-from pytgcalls.types import AudioPiped, StreamAudioEnded
+from ntgcalls import NtgCalls
+from ntgcalls.types import AudioPiped, StreamAudioEnded
 import yt_dlp
 import ffmpeg
 from PIL import Image, ImageDraw, ImageFont
