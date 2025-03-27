@@ -1,6 +1,8 @@
 import os
 import asyncio
+import requests
 from telethon import TelegramClient, events
+from telethon.sessions import StringSession
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import Updater, CommandHandler, CallbackContext
 import yt_dlp
@@ -10,10 +12,9 @@ from config import API_ID, API_HASH, BOT_TOKEN, SESSION_STRING
 
 # Telethon बॉट और असिस्टेंट क्लाइंट सेटअप
 bot = TelegramClient('bot', API_ID, API_HASH).start(bot_token=BOT_TOKEN)
-assistant = TelegramClient('assistant', API_ID, API_HASH).start(session_string=SESSION_STRING)
+assistant = TelegramClient(StringSession(SESSION_STRING), API_ID, API_HASH)
 
-# Queue System
-music_queue = []
+music_queue = []  # Queue सिस्टम
 
 # ऑडियो डाउनलोड और प्रोसेसिंग फ़ंक्शन
 async def download_audio(song_name):
@@ -86,6 +87,18 @@ async def play(update: Update, context: CallbackContext) -> None:
         music_queue.append((audio_file, chat_id, song_title, user_name))
         await update.message.reply_text(f"🎵 Added 1 music: {song_title}\nRequested by: {user_name}")
 
+async def skip(update: Update, context: CallbackContext) -> None:
+    if len(music_queue) > 1:
+        music_queue.pop(0)
+        next_song = music_queue[0]
+        
+        thumb_file = create_thumbnail(next_song[2], next_song[3])
+        await update.message.reply_photo(photo=open(thumb_file, "rb"), caption=f"🎵 Now Playing: {next_song[2]}\nRequested by: {next_song[3]}")
+        
+        await stream_audio(next_song[1], next_song[0])
+    else:
+        await update.message.reply_text("🎵 No more songs in the queue!")
+
 # बॉट स्टार्ट करें
 def main():
     updater = Updater(BOT_TOKEN, use_context=True)
@@ -93,12 +106,14 @@ def main():
 
     dp.add_handler(CommandHandler("start", start))
     dp.add_handler(CommandHandler("play", play))
+    dp.add_handler(CommandHandler("skip", skip))
 
     updater.start_polling()
     updater.idle()
 
 # Telethon क्लाइंट रन करें
 async def run_bot():
+    await assistant.start()
     await bot.run_until_disconnected()
 
 if __name__ == "__main__":
