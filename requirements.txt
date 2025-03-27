@@ -1,0 +1,6 @@
+telethon
+python-telegram-bot
+yt-dlp
+ffmpeg-python
+pillow
+requests
